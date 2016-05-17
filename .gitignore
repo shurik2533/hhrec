@@ -1,0 +1,5 @@
+*.p
+.ipynb_checkpoints/
+*.cfg
+*~
+
