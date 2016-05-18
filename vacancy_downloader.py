@@ -7,8 +7,12 @@ import ConfigParser
 
 headers = {"User-Agent": "hh-recommender"}
 conn = httplib.HTTPSConnection("api.hh.ru")
+print ("/vacancies?per_page=500&date_from={}&date_to={}"
+       .format((datetime.datetime.now() - datetime.timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%S'), 
+               datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')))
+
 conn.request("GET", "/vacancies?per_page=500&date_from={}&date_to={}"
-             .format((datetime.datetime.now() - datetime.timedelta(minutes=3)).strftime('%Y-%m-%dT%H:%M:%S'), 
+             .format((datetime.datetime.now() - datetime.timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%S'), 
                      datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')), headers=headers)
 r1 = conn.getresponse()
 vacancies = r1.read()
@@ -31,7 +35,6 @@ print len(json.loads(vacancies)['items'])
 cursor = db.cursor()
 
 for item in json.loads(vacancies)['items']:
-    print parse(item['published_at'])
     cursor.execute("""
       INSERT INTO vacancies (id, updated, item) 
       VALUES (%s, %s, %s)
