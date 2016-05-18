@@ -7,10 +7,6 @@ import ConfigParser
 
 headers = {"User-Agent": "hh-recommender"}
 conn = httplib.HTTPSConnection("api.hh.ru")
-print ("/vacancies?per_page=500&date_from={}&date_to={}"
-       .format((datetime.datetime.now() - datetime.timedelta(minutes=50)).strftime('%Y-%m-%dT%H:%M:%S'), 
-               datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')))
-
 conn.request("GET", "/vacancies?per_page=500&date_from={}&date_to={}"
              .format((datetime.datetime.now() - datetime.timedelta(minutes=3)).strftime('%Y-%m-%dT%H:%M:%S'), 
                      datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')), headers=headers)
