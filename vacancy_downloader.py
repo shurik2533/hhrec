@@ -41,13 +41,13 @@ while count == per_page:
     count = len(json.loads(vacancies)['items'])
     page = page+1
     print count
-    cursor = db.cursor()
 
     for item in json.loads(vacancies)['items']:
         conn = httplib.HTTPSConnection("api.hh.ru")
         conn.request("GET", "/vacancies/{}".format(item['id']), headers=headers)
         r1 = conn.getresponse()
         vacancy = r1.read()
+        cursor = db.cursor()
         cursor.execute("""
           INSERT INTO vacancies (id, updated, item) 
           VALUES (%s, %s, %s)
@@ -56,8 +56,8 @@ while count == per_page:
             item   = VALUES(item)""", (item['id'], 
                                        parse(item['published_at']).strftime("%Y-%m-%d %H:%M:%S"), 
                                        vacancy))
-
-    db.commit() 
+        db.commit() 
+    
     db.close()
     
 print "{} sec".format(current_time()-start)
