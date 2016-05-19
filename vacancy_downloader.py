@@ -14,10 +14,11 @@ conn = httplib.HTTPSConnection("api.hh.ru")
 per_page = 500
 page = 0
 count = per_page
+date_from = (datetime.datetime.now() - datetime.timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%S')
+date_to = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
 while count == per_page:
     path = ("/vacancies?per_page={}&date_from={}&date_to={}&page={}"
-            .format(per_page, (datetime.datetime.now() - datetime.timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%S'), 
-                    datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S'), page))
+            .format(per_page, date_from, date_to, page))
     print path
 
     conn.request("GET", path, headers=headers)
