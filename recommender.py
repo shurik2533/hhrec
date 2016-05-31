@@ -24,8 +24,9 @@ import httplib
 import re 
 import Stemmer
 import time
+import datetime
 
-
+print 'Start at {}'.format(datetime.datetime.now())
 start_time = time.time()
 config = ConfigParser.ConfigParser()
 config.readfp(open('my.cfg'))
@@ -212,8 +213,25 @@ def get_vacancies(offset, rows):
         if salary >= max_salary:
             salary = max_salary
         salaries.append(salary)
-        
-        areas.append(areas_map[vacancy['area']['id']])
+        try:
+            areas.append(areas_map[vacancy['area']['id']])
+        except KeyError:
+            print 'missed area id {} for vacancy {}'.format(vacancy['area']['id'], vacancy['id'])
+            
+            conn = httplib.HTTPSConnection("api.hh.ru")
+            conn.request("GET", "https://api.hh.ru/vacancies/{}".format(vacancy['id']), headers=headers)
+            r1 = conn.getresponse()
+            missed_area_vacancy = r1.read()
+            missed_area_vacancy_json = json.loads(missed_area_vacancy)
+            
+            conn = httplib.HTTPSConnection("api.hh.ru")
+            conn.request("GET", "https://api.hh.ru/areas/{}"
+                         .format(missed_area_vacancy_json['area']['id']), headers=headers)
+            r1 = conn.getresponse()
+            missed_area = r1.read()
+            missed_area_json = json.loads(missed_area)
+            areas_map[vacancy['area']['id']] = missed_area_json['parent_id']
+            areas.append(missed_area_json['parent_id'])
 
         p_doc = p_doc + " " + p_title + " " + p_skills
         
@@ -310,8 +328,8 @@ while f_len > 0:
     i = i+1
     print 'processed {} vаcancies'.format(i*count)
         
-#    if i == 15:
-#        break
+#     if i == 60:
+#         break
 
 for resume_id in res_similarities.keys():
     print resume_id
