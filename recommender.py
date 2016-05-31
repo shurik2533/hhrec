@@ -23,8 +23,10 @@ import numpy
 import httplib
 import re 
 import Stemmer
+import time
 
-stemmer = Stemmer.Stemmer('russian')
+
+start_time = time.time()
 config = ConfigParser.ConfigParser()
 config.readfp(open('my.cfg'))
 db = MySQLdb.connect(host="127.0.0.1", 
@@ -37,8 +39,6 @@ cursor = db.cursor()
 cursor.execute('SET NAMES utf8;')
 cursor.execute('SET CHARACTER SET utf8;')
 cursor.execute('SET character_set_connection=utf8;')
-cursor = db.cursor()
-cursor.execute("""SELECT item, id FROM vacancies WHERE updated >= (NOW() - INTERVAL 3 DAY)""")
 
 headers = {"User-Agent": "hh-recommender"}
 conn = httplib.HTTPSConnection("api.hh.ru")
@@ -52,10 +52,30 @@ currency_rates = {}
 for currency in currencies:
     currency_rates[currency['code']] = currency['rate']
     
-features_by_type = {}
-for employment_type in dictionaries_json['employment']:
-    features_by_type[employment_type['id']] = []
-
+#areas
+conn = httplib.HTTPSConnection("api.hh.ru")
+conn.request("GET", "https://api.hh.ru/areas", headers=headers)
+r1 = conn.getresponse()
+areas = r1.read()
+areas_json = json.loads(areas)
+areas_map = {}
+def build_areas_map(areas, areas_map):
+    for area in areas:
+        if area['id'] == '1':#msk
+            parent_id = '2019'
+        elif area['id'] == '2':#spb
+            parent_id = '145'
+        elif area['id'] == '115':#kiev
+            parent_id = '2164'
+        elif area['id'] == '1002':#minsk
+            parent_id = '2237'
+        else:
+            parent_id = area['parent_id']
+        areas_map[area['id']] = parent_id
+        build_areas_map(area['areas'], areas_map)
+        
+build_areas_map(areas_json, areas_map)
+    
 spec_ids = pickle.load( open( "spec_ids.p", "rb" ) )
 key_skills = pickle.load( open( "key_skills.p", "rb" ) )
 title_words = pickle.load( open( "title_words.p", "rb" ) )
@@ -63,117 +83,261 @@ title_words = pickle.load( open( "title_words.p", "rb" ) )
 count_vectorizer = pickle.load( open( "count_vectorizer.p", "rb" ) )
 tfidf_transformer = pickle.load( open( "tfidf_transformer.p", "rb" ) )
 
-data = []
-for item in cursor:
-    feature = []
-    vacancy = json.loads(item[0])
-    data.append(vacancy['name'])
-    
-    #description
-    p_doc = ''
-    doc = re.sub('<[^>]*>', '', vacancy['description'].lower())
-    doc = re.sub('&quot;', '', doc)
-    doc = re.sub(ur'[^a-zа-я]+', ' ', doc, re.UNICODE)
-    words = re.split(r'\s{1,}', doc.strip())
-    for word in words:
-        word = stemmer.stemWord(word.strip())
-        if len(word.strip()) > 1:
-            p_doc = p_doc + " " + word
-            
-    #title
-    p_title = ''
-    title = re.sub(ur'[^a-zа-я]+', ' ', vacancy['name'].lower(), re.UNICODE)
-    words = re.split(r'\s{1,}', title.strip())
-    for title_word in words:
-        title_word = stemmer.stemWord(title_word)
-        if len(title_word.strip()) > 1:
-            p_title = p_title + " " + title_word.strip()
-    
-    #keyskills
-    p_skills = ''
-    vac_skills = vacancy['key_skills']
-    for skill in vac_skills:
-        words = re.split(r'\s{1,}', skill['name'].lower().strip())
+def get_resumes():
+    salaries = []
+    features = []
+    ids = []
+    areas = []
+    stemmer = Stemmer.Stemmer('russian')
+    cursor = db.cursor()
+    cursor.execute("""SELECT item FROM resumes WHERE is_active=1""")
+    for item in cursor:
+        resume_json = json.loads(item[0])
+        feature = []
+        #description
+        p_doc = ''
+        doc = re.sub('<[^>]*>', '', resume_json['skills'].lower())
+        doc = re.sub('&quot;', '', doc)
+        doc = re.sub(ur'[^a-zа-я]+', ' ', doc, re.UNICODE)
+        words = re.split(r'\s{1,}', doc.strip())
         for word in words:
-            word = stemmer.stemWord(word)
+            word = stemmer.stemWord(word.strip())
             if len(word.strip()) > 1:
-                p_skills = p_skills + " " + word.strip()
-    
-    p_doc = p_doc + " " + p_title + " " + p_skills
-    
-    feature_p_doc = count_vectorizer.transform([p_doc])
-    tfidf_feature_p_doc = tfidf_transformer.transform(feature_p_doc)
-    
-    if features_by_type[vacancy['employment']['id']] == None:
-        features_by_type[vacancy['employment']['id']] = []
-    features_by_type[vacancy['employment']['id']].append(tfidf_feature_p_doc.toarray()[0])
+                p_doc = p_doc + " " + word
 
-cursor.close()
+        #title
+        p_title = ''
+        title = re.sub(ur'[^a-zа-я]+', ' ', resume_json['title'].lower(), re.UNICODE)
+        words = re.split(r'\s{1,}', title.strip())
+        for title_word in words:
+            title_word = stemmer.stemWord(title_word)
+            if len(title_word.strip()) > 1:
+                p_title = p_title + " " + title_word.strip()
 
+        #keyskills
+        p_skills = ''
+        res_skills = resume_json['skill_set']
+        for skill in res_skills:
+            words = re.split(r'\s{1,}', skill.lower().strip())
+            for word in words:
+                word = stemmer.stemWord(word)
+                if len(word.strip()) > 1:
+                    p_skills = p_skills + " " + word.strip()
+
+        #salary
+        salary = None
+        if resume_json['salary'] != None and resume_json['salary']['amount'] != None:
+            salary = resume_json['salary']['amount']/currency_rates[resume_json['salary']['currency']]
+        max_salary = 500000.0
+        if salary >= max_salary:
+            salary = max_salary
+        
+        
+        res_areas = []
+        res_areas.append(areas_map[resume_json['area']['id']])
+        for area in resume_json['relocation']['area']:
+            res_areas.append(areas_map[area['id']])
+        areas.append(res_areas)
+        
+
+        p_doc = p_doc + " " + p_title + " " + p_skills
+        feature_p_doc = count_vectorizer.transform([p_doc])
+        feature = tfidf_transformer.transform(feature_p_doc)
+        features.append(feature.toarray())
+        salaries.append(salary)
+        ids.append(resume_json['id'])
+    cursor.close()
+    return features, salaries, ids, areas
+
+
+def get_vacancies(offset, rows):
+    features = []
+
+    stemmer = Stemmer.Stemmer('russian')
+    cursor = db.cursor()
+    #будет задвоение, когда во время выборки в несколько запросом добавляются новые данные
+    cursor.execute("""SELECT item, id FROM vacancies WHERE updated >= (NOW() - INTERVAL 7 DAY) LIMIT {}, {}""".format(offset, rows))
+    vacancy_ids = []
+    salaries = []
+    cities = []
+    titles = []
+    areas = []
+    for item in cursor:
+        feature = []
+        vacancy = json.loads(item[0])
+        vacancy_ids.append(vacancy['id'])
+
+        #description
+        p_doc = ''
+        doc = re.sub('<[^>]*>', '', vacancy['description'].lower())
+        doc = re.sub('&quot;', '', doc)
+        doc = re.sub(ur'[^a-zа-я]+', ' ', doc, re.UNICODE)
+        words = re.split(r'\s{1,}', doc.strip())
+        for word in words:
+            word = stemmer.stemWord(word.strip())
+            if len(word.strip()) > 1:
+                p_doc = p_doc + " " + word
+
+        #title
+        p_title = ''
+        title = re.sub(ur'[^a-zа-я]+', ' ', vacancy['name'].lower(), re.UNICODE)
+        words = re.split(r'\s{1,}', title.strip())
+        for title_word in words:
+            title_word = stemmer.stemWord(title_word)
+            if len(title_word.strip()) > 1:
+                p_title = p_title + " " + title_word.strip()
+                
+        titles.append(vacancy['name'])
+
+        #keyskills
+        p_skills = ''
+        vac_skills = vacancy['key_skills']
+        for skill in vac_skills:
+            words = re.split(r'\s{1,}', skill['name'].lower().strip())
+            for word in words:
+                word = stemmer.stemWord(word)
+                if len(word.strip()) > 1:
+                    p_skills = p_skills + " " + word.strip()
+                    
+        #salary
+        salary = None
+        if vacancy['salary'] != None:
+            if vacancy['salary']['from'] == None and vacancy['salary']['to'] != None:
+                salary = vacancy['salary']['to']/currency_rates[vacancy['salary']['currency']]
+            elif vacancy['salary']['to'] == None and vacancy['salary']['from'] != None:
+                salary = vacancy['salary']['from']/currency_rates[vacancy['salary']['currency']]
+            elif vacancy['salary']['to'] != None and vacancy['salary']['from'] != None:
+                salary = ((vacancy['salary']['from'] + vacancy['salary']['to'])/2)/currency_rates[vacancy['salary']['currency']]
+        max_salary = 500000.0
+        if salary >= max_salary:
+            salary = max_salary
+        salaries.append(salary)
+        
+        areas.append(areas_map[vacancy['area']['id']])
+
+        p_doc = p_doc + " " + p_title + " " + p_skills
+        
+
+        feature_p_doc = count_vectorizer.transform([p_doc])
+        tfidf_feature_p_doc = tfidf_transformer.transform(feature_p_doc)
+            
+        features.append(tfidf_feature_p_doc.toarray()[0])
+
+    cursor.close()
+    return features, vacancy_ids, salaries, titles, areas
+
+def get_recommended(resume_feature, vacancy_features, resume_salary, vacancy_salaries, vacancy_ids, vac_titles, resume_areas, vacancies_area):
+    pre_vacancy_features = []
+    pre_vacancy_ids = []
+    pre_vac_titles = []
+    pre_vacancy_salaries = []
+    j = 0
+    for vac_area in vacancies_area:
+        if vac_area in resume_areas:
+            pre_vacancy_features.append(vacancy_features[j])
+            pre_vacancy_ids.append(vacancy_ids[j])
+            pre_vac_titles.append(vac_titles[j])
+            pre_vacancy_salaries.append(vacancy_salaries[j])
+        j = j+1
+        
+    new_vacancy_features = []
+    new_vacancy_ids = []
+    new_vac_titles = []
+    if resume_salary == None:
+        new_vacancy_features = pre_vacancy_features
+        new_vacancy_ids = pre_vacancy_ids
+        new_vac_titles = pre_vac_titles
+    else:
+        i = 0
+        for vac_salary in pre_vacancy_salaries:
+            if vac_salary == None:
+                new_vacancy_features.append(pre_vacancy_features[i])
+                new_vacancy_ids.append(pre_vacancy_ids[i])
+                new_vac_titles.append(pre_vac_titles[i])
+            else:
+                min_resume_salary = resume_salary - (resume_salary * 0.2)
+                max_resume_salary = resume_salary + (resume_salary * 0.8)
+                if vac_salary >= min_resume_salary and vac_salary <= max_resume_salary:
+                    new_vacancy_features.append(pre_vacancy_features[i])
+                    new_vacancy_ids.append(pre_vacancy_ids[i])
+                    new_vac_titles.append(pre_vac_titles[i])
+                
+            i = i+1    
+    
+    similarities = []
+    ids = []
+    titles = []
+    if len(new_vacancy_features) > 0:
+        c_result = cosine_similarity(resume_feature, new_vacancy_features)
+        res = heapq.nlargest(20, range(len(c_result[0])), c_result[0].take)
+        
+        for j in res:
+            similarities.append(c_result[0][j])
+            ids.append(new_vacancy_ids[j])
+            titles.append(new_vac_titles[j])
+    return similarities, ids, titles
+
+resume_features, resume_salaries, resume_ids, resume_areas = get_resumes()
+
+count = 1000
+features = get_vacancies(0, count)
+features, vacancy_ids, salaries, titles, vacancy_areas = get_vacancies(0, count)
+
+f_len = len(features)
+
+res_similarities = {}
+res_recommended_ids = {}
+res_recommended_titles = {}
+for idx, val in enumerate(resume_features):  
+    r_similarities, r_ids, r_titles = get_recommended(resume_features[idx], features, resume_salaries[idx], salaries, vacancy_ids, 
+                                                      titles, resume_areas[idx], vacancy_areas)
+    res_similarities[resume_ids[idx]] = r_similarities
+    res_recommended_ids[resume_ids[idx]] = r_ids
+    res_recommended_titles[resume_ids[idx]] = r_titles
+
+i = 0
+while f_len > 0:
+    features, vacancy_ids, salaries, titles, vacancy_areas = get_vacancies(i*count, count)
+    f_len = len(features)
+    if f_len > 0:
+        for idx, val in enumerate(resume_features):
+            r_similarities, r_ids, r_titles = get_recommended(resume_features[idx], features, resume_salaries[idx], salaries, vacancy_ids, 
+                                                              titles, resume_areas[idx], vacancy_areas)
+            res_similarities[resume_ids[idx]] = res_similarities[resume_ids[idx]] + r_similarities
+            res_recommended_ids[resume_ids[idx]] = res_recommended_ids[resume_ids[idx]] + r_ids
+            res_recommended_titles[resume_ids[idx]] = res_recommended_titles[resume_ids[idx]] + r_titles
+            
+    i = i+1
+    print 'processed {} vаcancies'.format(i*count)
+        
+#    if i == 15:
+#        break
+
+for resume_id in res_similarities.keys():
+    print resume_id
+    similarities = res_similarities[resume_id]
+    ids = res_recommended_ids[resume_id]
+    titles = res_recommended_titles[resume_id]
+    max_similarities = heapq.nlargest(20, range(len(numpy.asarray(similarities))), numpy.asarray(similarities).take)
+    cursor = db.cursor()
+    try:
+        cursor.execute("""UPDATE recommendations SET is_active=0 WHERE resume_id='{}'""".format(resume_id))
+    except BaseException:
+        db.rollback()
+    finally:
+        cursor.close()
+    for ind in max_similarities:
+        cursor = db.cursor()
+        try:
+            cursor.execute("""INSERT INTO recommendations (resume_id, vacancy_id, updated, is_active, similarity, vacancy_title) VALUES ('{}', {}, now(), 1, {}, '{}')""".format(resume_id, ids[ind], similarities[ind], titles[ind].encode('utf-8').strip()))
+        except BaseException:
+            db.rollback()
+        finally:
+            cursor.close()
+        print 'for {} similarity is {}'.format(ids[ind], similarities[ind])
+    db.commit()
+        
+db.commit()
 db.close()
 
-print('vacancies done')
-
-
-
-headers = {"User-Agent": "hh-recommender", "Authorization" : "Bearer T5MIT6GVV85LSVR75CB7U768TR3PFGS990I3QJNFV6A4CBQJF6M30G0MOT8U2V8I"}
-conn = httplib.HTTPSConnection("api.hh.ru")
-conn.request("GET", "https://api.hh.ru/resumes/mine", headers=headers)
-r1 = conn.getresponse()
-me = r1.read()
-me_json = json.loads(me)
-print me_json['items'][0]['id']
-
-conn = httplib.HTTPSConnection("api.hh.ru")
-conn.request("GET", "https://api.hh.ru/resumes/{}".format(me_json['items'][0]['id']), headers=headers)
-r1 = conn.getresponse()
-resume = r1.read()
-resume_json = json.loads(resume)
-
-feature = []
-resume_type = 'full'
-
-resume_type = resume_json['employment']['id']
-
-#description
-p_doc = ''
-doc = re.sub('<[^>]*>', '', resume_json['skills'].lower())
-doc = re.sub('&quot;', '', doc)
-doc = re.sub(ur'[^a-zа-я]+', ' ', doc, re.UNICODE)
-words = re.split(r'\s{1,}', doc.strip())
-for word in words:
-    word = stemmer.stemWord(word.strip())
-    if len(word.strip()) > 1:
-        p_doc = p_doc + " " + word
-
-#title
-p_title = ''
-title = re.sub(ur'[^a-zа-я]+', ' ', resume_json['title'].lower(), re.UNICODE)
-words = re.split(r'\s{1,}', title.strip())
-for title_word in words:
-    title_word = stemmer.stemWord(title_word)
-    if len(title_word.strip()) > 1:
-        p_title = p_title + " " + title_word.strip()
-
-#keyskills
-p_skills = ''
-res_skills = resume_json['skill_set']
-for skill in res_skills:
-    words = re.split(r'\s{1,}', skill.lower().strip())
-    for word in words:
-        word = stemmer.stemWord(word)
-        if len(word.strip()) > 1:
-            p_skills = p_skills + " " + word.strip()
-
-p_doc = p_doc + " " + p_title + " " + p_skills
-
-feature_p_doc = count_vectorizer.transform([p_doc])
-feature = tfidf_transformer.transform(feature_p_doc)
-
-features = features_by_type[resume_type]
-
-result = cosine_similarity(feature, features)
-res = heapq.nlargest(10, range(len(result[0])), result[0].take)
-for i in res:
-    print result[0][i]
-    print data[i]
+print 'total time {} sec\n'.format(time.time()-start_time)
