@@ -97,23 +97,25 @@ def get_resumes():
         feature = []
         #description
         p_doc = ''
-        doc = re.sub('<[^>]*>', '', resume_json['skills'].lower())
-        doc = re.sub('&quot;', '', doc)
-        doc = re.sub(ur'[^a-zа-я]+', ' ', doc, re.UNICODE)
-        words = re.split(r'\s{1,}', doc.strip())
-        for word in words:
-            word = stemmer.stemWord(word.strip())
-            if len(word.strip()) > 1:
-                p_doc = p_doc + " " + word
+        if resume_json['skills'] != None:
+            doc = re.sub('<[^>]*>', '', resume_json['skills'].lower())
+            doc = re.sub('&quot;', '', doc)
+            doc = re.sub(ur'[^a-zа-я]+', ' ', doc, re.UNICODE)
+            words = re.split(r'\s{1,}', doc.strip())
+            for word in words:
+                word = stemmer.stemWord(word.strip())
+                if len(word.strip()) > 1:
+                    p_doc = p_doc + " " + word
 
         #title
         p_title = ''
-        title = re.sub(ur'[^a-zа-я]+', ' ', resume_json['title'].lower(), re.UNICODE)
-        words = re.split(r'\s{1,}', title.strip())
-        for title_word in words:
-            title_word = stemmer.stemWord(title_word)
-            if len(title_word.strip()) > 1:
-                p_title = p_title + " " + title_word.strip()
+        if resume_json['title'] != None:
+            title = re.sub(ur'[^a-zа-я]+', ' ', resume_json['title'].lower(), re.UNICODE)
+            words = re.split(r'\s{1,}', title.strip())
+            for title_word in words:
+                title_word = stemmer.stemWord(title_word)
+                if len(title_word.strip()) > 1:
+                    p_title = p_title + " " + title_word.strip()
 
         #keyskills
         p_skills = ''
@@ -135,7 +137,10 @@ def get_resumes():
         
         
         res_areas = []
-        res_areas.append(areas_map[resume_json['area']['id']])
+        if resume_json['area'] == None:
+            res_areas.append(areas_map["1"])
+        else :
+            res_areas.append(areas_map[resume_json['area']['id']])
         for area in resume_json['relocation']['area']:
             res_areas.append(areas_map[area['id']])
         areas.append(res_areas)
@@ -328,8 +333,8 @@ while f_len > 0:
     i = i+1
     print 'processed {} vаcancies'.format(i*count)
         
-#     if i == 60:
-#         break
+    if i == 20:
+        break
 
 for resume_id in res_similarities.keys():
     print resume_id
