@@ -333,8 +333,8 @@ while f_len > 0:
     i = i+1
     print 'processed {} vаcancies'.format(i*count)
         
-    if i == 20:
-        break
+#    if i == 20:
+#        break
 
 for resume_id in res_similarities.keys():
     print resume_id
