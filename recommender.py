@@ -203,7 +203,7 @@ def process_vacancy_ids(vacancy_ids):
     return len(vacancy_ids), pre_vacancy_similarities, pre_vacancy_ids
 
 tp_res = [] 
-tpool = Pool(processes=15) 
+tpool = Pool(processes=8) 
 def iterate_ids(start, i):
     cnt = 1000
     rcursor = r.scan(cursor=start, count=cnt)
@@ -258,7 +258,11 @@ def finalize_recommendations(resume_id):
         r1 = conn.getresponse()
         t_vacancy = r1.read()
         t_vacancy_json = json.loads(t_vacancy)
-        title = t_vacancy_json['name'].encode('utf-8').strip()
+        try:
+            title = t_vacancy_json['name'].encode('utf-8').strip()
+        except KeyError as ex:
+            print ex
+            title = 'Title temporary not found'
 
         lock.acquire()
         try:
