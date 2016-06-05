@@ -36,6 +36,7 @@ db = MySQLdb.connect(host="127.0.0.1",
                      user=config.get('mysqld', 'user'), 
                      passwd=config.get('mysqld', 'password'), 
                      db=config.get('mysqld', 'database') )
+db.autocommit(True)
 db.set_character_set('utf8')
 cursor = db.cursor()
 cursor.execute('SET NAMES utf8;')
@@ -159,15 +160,14 @@ def get_resumes():
 resume_features, resume_salaries, resume_ids, resume_areas = get_resumes()
 lock = threading.Lock()
 
-def process_vacancy_ids(vacancy_ids):
+def process_vacancy_ids(vacancies):
     pre_vacancy_similarities = {}
     pre_vacancy_ids = {}
 
     for idx, val in enumerate(resume_features):
         new_vacancy_features = []
         new_vacancy_ids = []
-        for vac_id in vacancy_ids:
-            vac_data = r.hgetall(vac_id)
+        for vac_id, vac_data in vacancies.iteritems():
             if resume_areas[idx][0] == vac_data['area'] and (resume_salaries[idx] == None or vac_data['salary'] == 'None'):
                 new_vacancy_features.append(json.loads(vac_data['features'].decode('zlib')))
                 new_vacancy_ids.append(vac_id)
@@ -200,23 +200,27 @@ def process_vacancy_ids(vacancy_ids):
         finally:
             lock.release()
             
-    return len(vacancy_ids), pre_vacancy_similarities, pre_vacancy_ids
+    return len(vacancies), pre_vacancy_similarities, pre_vacancy_ids
 
 tp_res = [] 
-tpool = Pool(processes=8) 
-def iterate_ids(start, i):
-    cnt = 1000
+tpool = Pool(3) 
+def iterate_ids(start):
+    cnt = 500
     rcursor = r.scan(cursor=start, count=cnt)
-    if rcursor[0] == 0:
-        return
-    
-    tres = tpool.apply_async(process_vacancy_ids, (rcursor[1],))
+    vacancies = {}
+    for vac_id in rcursor[1]:
+        vacancies[vac_id] = r.hgetall(vac_id)
+    tres = tpool.apply_async(process_vacancy_ids, (vacancies,))
     tp_res.append(tres)
-    i = i+1
-    iterate_ids(rcursor[0], i)
-    
+    while (rcursor[0] != 0):
+        rcursor = r.scan(cursor=rcursor[0], count=cnt)
+        vacancies = {}
+        for vac_id in rcursor[1]:
+            vacancies[vac_id] = r.hgetall(vac_id)
+        tres = tpool.apply_async(process_vacancy_ids, (vacancies,))
+        tp_res.append(tres)
 
-iterate_ids(0, 0)
+iterate_ids(0)
 
 c = 0
 pre_vacancy_similarities = {}
@@ -245,7 +249,6 @@ def finalize_recommendations(resume_id):
         try:
             cursor.execute("""UPDATE recommendations SET is_active=0 WHERE resume_id='{}'""".format(resume_id))
         except BaseException as ex:
-            db.rollback()
             print ex
         finally:
             cursor.close()
@@ -270,23 +273,17 @@ def finalize_recommendations(resume_id):
             try:
                 cursor.execute("""INSERT INTO recommendations (resume_id, vacancy_id, updated, is_active, similarity, vacancy_title) VALUES ('{}', {}, now(), 1, {}, '{}')""".format(resume_id, ids[ind], similarities[ind], title))
             except BaseException as err:
-                db.rollback()
                 print err
             finally:
                 cursor.close()
         finally:
             lock.release()
         result.append('{}. for {} similarity is {}'.format(resume_id, ids[ind], similarities[ind]))
-    
-    lock.acquire()
-    try:
-        db.commit()
-    finally:
-        lock.release()
+
     return result
 
 p_res = [] 
-pool = Pool(processes=7) 
+pool = Pool(7) 
 for resume_id in pre_vacancy_similarities.keys():
     res = pool.apply_async(finalize_recommendations, (resume_id,))
     p_res.append(res)
@@ -296,7 +293,6 @@ for t in p_res:
     for s in res:
         print s
         
-db.commit()
 db.close()
 
 print 'total time {} sec\n'.format(time.time()-start_time)

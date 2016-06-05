@@ -27,7 +27,7 @@ import redis
 print 'Start at {}'.format(datetime.datetime.now())
 r = redis.StrictRedis(host='localhost', port=6379, db=0)
 start_time = time.time()
-timeout = 6*24*60*60
+timeout = 5*24*60*60
 headers = {"User-Agent": "hh-recommender"}
 conn = httplib.HTTPSConnection("api.hh.ru")
 conn.request("GET", "https://api.hh.ru/dictionaries", headers=headers)
