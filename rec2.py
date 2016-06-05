@@ -24,7 +24,6 @@ import time
 import datetime
 import redis
 import threading
-from multiprocessing import Pool
 
 print 'Start at {}'.format(datetime.datetime.now())
 start_time = time.time()
@@ -157,13 +156,11 @@ def get_resumes():
     return features, salaries, ids, areas
 
 resume_features, resume_salaries, resume_ids, resume_areas = get_resumes()
-lock = threading.Lock()
 
+pre_vacancy_similarities = {}
+pre_vacancy_ids = {}
 def process_vacancy_ids(vacancy_ids):
-    pre_vacancy_similarities = {}
-    pre_vacancy_ids = {}
-
-    for idx, val in enumerate(resume_features):
+    for idx, val in enumerate(resume_features): 
         new_vacancy_features = []
         new_vacancy_ids = []
         for vac_id in vacancy_ids:
@@ -189,111 +186,80 @@ def process_vacancy_ids(vacancy_ids):
                 similarities.append(c_result[0][j])
                 ids.append(new_vacancy_ids[j])
         
-        lock.acquire()
-        try:
-            if resume_ids[idx] not in pre_vacancy_similarities:
-                pre_vacancy_similarities[resume_ids[idx]] = similarities
-                pre_vacancy_ids[resume_ids[idx]] = ids
-            else:
-                pre_vacancy_similarities[resume_ids[idx]] = pre_vacancy_similarities[resume_ids[idx]] + similarities
-                pre_vacancy_ids[resume_ids[idx]] = pre_vacancy_ids[resume_ids[idx]] + ids
-        finally:
-            lock.release()
-            
-    return len(vacancy_ids), pre_vacancy_similarities, pre_vacancy_ids
+        if resume_ids[idx] not in pre_vacancy_similarities:
+            pre_vacancy_similarities[resume_ids[idx]] = similarities
+            pre_vacancy_ids[resume_ids[idx]] = ids
+        else:
+            pre_vacancy_similarities[resume_ids[idx]] = pre_vacancy_similarities[resume_ids[idx]] + similarities
+            pre_vacancy_ids[resume_ids[idx]] = pre_vacancy_ids[resume_ids[idx]] + ids
 
-tp_res = [] 
-tpool = Pool(processes=15) 
+
 def iterate_ids(start, i):
     cnt = 1000
     rcursor = r.scan(cursor=start, count=cnt)
     if rcursor[0] == 0:
         return
-    
-    tres = tpool.apply_async(process_vacancy_ids, (rcursor[1],))
-    tp_res.append(tres)
+    process_vacancy_ids(rcursor[1])
     i = i+1
-    iterate_ids(rcursor[0], i)
+    print 'processed {}'.format(i*cnt)
+#     iterate_ids(rcursor[0], i)
     
 
 iterate_ids(0, 0)
-
-c = 0
-pre_vacancy_similarities = {}
-pre_vacancy_ids = {}
-for tr in tp_res:
-    cnt, p_vacancy_similarities, p_vacancy_ids = tr.get()
-    for resume_id in p_vacancy_similarities.keys():
-        if resume_id not in pre_vacancy_similarities:
-            pre_vacancy_similarities[resume_id] = p_vacancy_similarities[resume_id]
-            pre_vacancy_ids[resume_id] = p_vacancy_ids[resume_id]
-        else:
-            pre_vacancy_similarities[resume_id] = pre_vacancy_similarities[resume_id]+p_vacancy_similarities[resume_id]
-            pre_vacancy_ids[resume_id] = pre_vacancy_ids[resume_id]+p_vacancy_ids[resume_id]
-    
-    c = c+cnt
-    print 'processed {}'.format(c)
-
-def finalize_recommendations(resume_id):
-    result = []
+def finalize_recommendations():
     similarities = pre_vacancy_similarities[resume_id]
     ids = pre_vacancy_ids[resume_id]
     max_similarities = heapq.nlargest(20, range(len(numpy.asarray(similarities))), numpy.asarray(similarities).take)
-    lock.acquire()
+    cursor = db.cursor()
     try:
+        cursor.execute("""UPDATE recommendations SET is_active=0 WHERE resume_id='{}'""".format(resume_id))
+    except BaseException:
+        db.rollback()
+    finally:
+        cursor.close()
+    for ind in max_similarities:
         cursor = db.cursor()
         try:
-            cursor.execute("""UPDATE recommendations SET is_active=0 WHERE resume_id='{}'""".format(resume_id))
-        except BaseException as ex:
+            conn = httplib.HTTPSConnection("api.hh.ru")
+            conn.request("GET", "https://api.hh.ru/vacancies/{}".format(ids[ind]), headers=headers)
+            r1 = conn.getresponse()
+            t_vacancy = r1.read()
+            t_vacancy_json = json.loads(t_vacancy)
+            title = t_vacancy_json['name'].encode('utf-8').strip()
+            cursor.execute("""INSERT INTO recommendations (resume_id, vacancy_id, updated, is_active, similarity, vacancy_title) VALUES ('{}', {}, now(), 1, {}, '{}')""".format(resume_id, ids[ind], similarities[ind], title))
+        except BaseException as err:
             db.rollback()
-            print ex
+            print err
         finally:
             cursor.close()
-    finally:
-        lock.release()
-        
-    for ind in max_similarities:
-        conn = httplib.HTTPSConnection("api.hh.ru")
-        conn.request("GET", "https://api.hh.ru/vacancies/{}".format(ids[ind]), headers=headers)
-        r1 = conn.getresponse()
-        t_vacancy = r1.read()
-        t_vacancy_json = json.loads(t_vacancy)
-        title = t_vacancy_json['name'].encode('utf-8').strip()
+        print '{}. for {} similarity is {}'.format(resume_id, ids[ind], similarities[ind])
+    db.commit()
 
-        lock.acquire()
-        try:
-            cursor = db.cursor()
-            try:
-                cursor.execute("""INSERT INTO recommendations (resume_id, vacancy_id, updated, is_active, similarity, vacancy_title) VALUES ('{}', {}, now(), 1, {}, '{}')""".format(resume_id, ids[ind], similarities[ind], title))
-            except BaseException as err:
-                db.rollback()
-                print err
-            finally:
-                cursor.close()
-        finally:
-            lock.release()
-        result.append('{}. for {} similarity is {}'.format(resume_id, ids[ind], similarities[ind]))
-    
-    lock.acquire()
-    try:
-        db.commit()
-    finally:
-        lock.release()
-    return result
-
-p_res = [] 
-pool = Pool(processes=7) 
+t_num = 1;
+threads = [] 
 for resume_id in pre_vacancy_similarities.keys():
-    res = pool.apply_async(finalize_recommendations, (resume_id,))
-    p_res.append(res)
+    t_num = t_num + 1
+    t = threading.Thread(target=finalize_recommendations)
+    threads.append(t)
+    t.start()
     
-for t in p_res:
-    res = t.get()
-    for s in res:
-        print s
+for t in threads:
+    t.join()
         
 db.commit()
 db.close()
 
 print 'total time {} sec\n'.format(time.time()-start_time)
 
+
+# t_num = 1;
+# threads = []
+# for vac_id_chunk in vac_id_chunks:
+#     print 'starting t{}'.format(t_num)
+#     t_num = t_num + 1
+#     t = threading.Thread(target=process_vacancies, kwargs={'vacancy_ids': vac_id_chunk})
+#     threads.append(t)
+#     t.start()
+    
+# for t in threads:
+#     t.join()
