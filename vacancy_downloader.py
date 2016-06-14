@@ -6,16 +6,10 @@ import MySQLdb
 import ConfigParser
 import time
 import threading
-from dateutil.parser import parse
 import pickle
 from sklearn.metrics.pairwise import cosine_similarity
-from tinydb import TinyDB
-from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.feature_selection import VarianceThreshold
-from scipy import spatial
-from sklearn.metrics.pairwise import cosine_similarity
 import heapq
 import numpy
 import re 
@@ -32,9 +26,13 @@ headers = {"User-Agent": "hh-recommender"}
 conn = httplib.HTTPSConnection("api.hh.ru")
 conn.request("GET", "https://api.hh.ru/dictionaries", headers=headers)
 r1 = conn.getresponse()
+if r1.status != 200:
+    conn.close()
+    conn = httplib.HTTPSConnection("api.hh.ru")
+    conn.request("GET", "https://api.hh.ru/dictionaries", headers=headers)
+    r1 = conn.getresponse()
 dictionaries = r1.read()
 dictionaries_json = json.loads(dictionaries)
-
 currencies = dictionaries_json['currency']
 currency_rates = {}
 for currency in currencies:
@@ -44,7 +42,13 @@ for currency in currencies:
 conn = httplib.HTTPSConnection("api.hh.ru")
 conn.request("GET", "https://api.hh.ru/areas", headers=headers)
 r1 = conn.getresponse()
+if r1.status != 200:
+    conn.close()
+    conn = httplib.HTTPSConnection("api.hh.ru")
+    conn.request("GET", "https://api.hh.ru/areas", headers=headers)
+    r1 = conn.getresponse()
 areas = r1.read()
+conn.close()
 areas_json = json.loads(areas)
 areas_map = {}
 def build_areas_map(areas, areas_map):
@@ -64,12 +68,12 @@ def build_areas_map(areas, areas_map):
         
 build_areas_map(areas_json, areas_map)
     
-spec_ids = pickle.load( open( "spec_ids.p", "rb" ) )
-key_skills = pickle.load( open( "key_skills.p", "rb" ) )
-title_words = pickle.load( open( "title_words.p", "rb" ) )
-
-count_vectorizer = pickle.load( open( "count_vectorizer.p", "rb" ) )
-tfidf_transformer = pickle.load( open( "tfidf_transformer.p", "rb" ) )
+with open( "count_vectorizer.p", "rb" ) as f:
+    count_vectorizer = pickle.load(f)
+    
+with open( "tfidf_transformer.p", "rb" ) as f:
+    tfidf_transformer = pickle.load(f)
+    
 stemmer = Stemmer.Stemmer('russian')
     
 headers = {"User-Agent": "hh-recommender"}
@@ -105,6 +109,7 @@ def get_vacancy_ids():
         conn.request("GET", path, headers=headers)
         r1 = conn.getresponse()
         vacancies = r1.read()
+        conn.close()
 
         count = len(json.loads(vacancies)['items'])
         page = page+1
@@ -119,7 +124,13 @@ def process_vacancies(vacancy_ids):
         conn = httplib.HTTPSConnection("api.hh.ru")
         conn.request("GET", "/vacancies/{}".format(vac_id), headers=headers)
         r1 = conn.getresponse()
+        if r1 != 200:
+            conn.close()
+            conn = httplib.HTTPSConnection("api.hh.ru")
+            conn.request("GET", "/vacancies/{}".format(vac_id), headers=headers)
+            r1 = conn.getresponse()
         vacancy_txt = r1.read()
+        conn.close()
         vacancy = json.loads(vacancy_txt)
         
         feature = []
@@ -175,7 +186,13 @@ def process_vacancies(vacancy_ids):
             conn = httplib.HTTPSConnection("api.hh.ru")
             conn.request("GET", "https://api.hh.ru/vacancies/{}".format(vacancy['id']), headers=headers)
             r1 = conn.getresponse()
+            if r1 != 200:
+                conn.close()
+                conn = httplib.HTTPSConnection("api.hh.ru")
+                conn.request("GET", "https://api.hh.ru/vacancies/{}".format(vacancy['id']), headers=headers)
+                r1 = conn.getresponse()
             missed_area_vacancy = r1.read()
+            conn.close()
             missed_area_vacancy_json = json.loads(missed_area_vacancy)
             
             conn = httplib.HTTPSConnection("api.hh.ru")
@@ -183,6 +200,7 @@ def process_vacancies(vacancy_ids):
                          .format(missed_area_vacancy_json['area']['id']), headers=headers)
             r1 = conn.getresponse()
             missed_area = r1.read()
+            conn.close()
             missed_area_json = json.loads(missed_area)
             areas_map[vacancy['area']['id']] = missed_area_json['parent_id']
             area_id = missed_area_json['parent_id']

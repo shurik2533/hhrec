@@ -1,22 +1,14 @@
 # -*- coding: utf-8 -*-
 #recommender2
 import pickle
-from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.feature_selection import VarianceThreshold
-from scipy import spatial
-from sklearn.metrics.pairwise import cosine_similarity
 import heapq
 import numpy
-from tinydb import TinyDB
 import ConfigParser
 import MySQLdb
 import json
-from scipy import spatial
 from sklearn.metrics.pairwise import cosine_similarity
-import heapq
-import numpy
 import httplib
 import re 
 import Stemmer
@@ -42,12 +34,19 @@ cursor = db.cursor()
 cursor.execute('SET NAMES utf8;')
 cursor.execute('SET CHARACTER SET utf8;')
 cursor.execute('SET character_set_connection=utf8;')
+cursor.close()
 
 headers = {"User-Agent": "hh-recommender"}
 conn = httplib.HTTPSConnection("api.hh.ru")
 conn.request("GET", "https://api.hh.ru/dictionaries", headers=headers)
 r1 = conn.getresponse()
+if r1.status != 200:
+    conn.close()
+    conn = httplib.HTTPSConnection("api.hh.ru")
+    conn.request("GET", "https://api.hh.ru/dictionaries", headers=headers)
+    r1 = conn.getresponse()
 dictionaries = r1.read()
+conn.close()
 dictionaries_json = json.loads(dictionaries)
 
 currencies = dictionaries_json['currency']
@@ -59,7 +58,13 @@ for currency in currencies:
 conn = httplib.HTTPSConnection("api.hh.ru")
 conn.request("GET", "https://api.hh.ru/areas", headers=headers)
 r1 = conn.getresponse()
+if r1.status != 200:
+    conn.close()
+    conn = httplib.HTTPSConnection("api.hh.ru")
+    conn.request("GET", "https://api.hh.ru/areas", headers=headers)
+    r1 = conn.getresponse()
 areas = r1.read()
+conn.close()
 areas_json = json.loads(areas)
 areas_map = {}
 def build_areas_map(areas, areas_map):
@@ -78,13 +83,12 @@ def build_areas_map(areas, areas_map):
         build_areas_map(area['areas'], areas_map)
         
 build_areas_map(areas_json, areas_map)
+  
+with open( "count_vectorizer.p", "rb" ) as f:
+    count_vectorizer = pickle.load(f)
     
-spec_ids = pickle.load( open( "spec_ids.p", "rb" ) )
-key_skills = pickle.load( open( "key_skills.p", "rb" ) )
-title_words = pickle.load( open( "title_words.p", "rb" ) )
-
-count_vectorizer = pickle.load( open( "count_vectorizer.p", "rb" ) )
-tfidf_transformer = pickle.load( open( "tfidf_transformer.p", "rb" ) )
+with open( "tfidf_transformer.p", "rb" ) as f:
+    tfidf_transformer = pickle.load(f)
 
 def get_resumes():
     salaries = []
@@ -259,7 +263,13 @@ def finalize_recommendations(resume_id):
         conn = httplib.HTTPSConnection("api.hh.ru")
         conn.request("GET", "https://api.hh.ru/vacancies/{}".format(ids[ind]), headers=headers)
         r1 = conn.getresponse()
+        if r1.status != 200:
+            conn.close()
+            conn = httplib.HTTPSConnection("api.hh.ru")
+            conn.request("GET", "https://api.hh.ru/vacancies/{}".format(ids[ind]), headers=headers)
+            r1 = conn.getresponse()
         t_vacancy = r1.read()
+        conn.close()
         t_vacancy_json = json.loads(t_vacancy)
         try:
             title = t_vacancy_json['name'].encode('utf-8').strip()
