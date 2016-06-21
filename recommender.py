@@ -148,6 +148,19 @@ def get_resumes():
         max_salary = 500000.0
         if salary >= max_salary:
             salary = max_salary
+            
+        #experience
+        if resume_json['experience'] != None and len(resume_json['experience'])> 0 and resume_json['experience'][0]['description'] != None:
+            experience_description = resume_json['experience'][0]['description']
+            doc = re.sub('<[^>]*>', '', experience_description.lower())
+            doc = re.sub('&quot;', '', doc)
+            doc = re.sub(ur'[^a-zа-я]+', ' ', doc, re.UNICODE)
+            words = re.split(r'\s{1,}', doc.strip())
+            for word in words:
+                word = stemmer.stemWord(word.strip())
+                if len(word.strip()) > 1:
+                    p_doc = p_doc + " " + word
+            
         
         
         res_areas = []
