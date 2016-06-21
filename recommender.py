@@ -97,7 +97,14 @@ def get_resumes():
     areas = []
     stemmer = Stemmer.Stemmer('russian')
     cursor = db.cursor()
-    cursor.execute("""SELECT item FROM resumes WHERE is_active=1""")
+    cursor.execute("""
+        SELECT r.item 
+        FROM resumes r 
+        WHERE r.is_active=1 AND NOT EXISTS (
+            SELECT * 
+            FROM recommendations rec
+            WHERE rec.resume_id=r.item_id and rec.is_active=1
+        ) """)
     for item in cursor:
         resume_json = json.loads(item[0])
         feature = []
@@ -281,7 +288,10 @@ def finalize_recommendations(resume_id):
         try:
             cursor = db.cursor()
             try:
-                cursor.execute("""INSERT INTO recommendations (resume_id, vacancy_id, updated, is_active, similarity, vacancy_title) VALUES ('{}', {}, now(), 1, {}, '{}')""".format(resume_id, ids[ind], similarities[ind], title))
+                cursor.execute("""
+                    INSERT INTO recommendations (resume_id, vacancy_id, updated, is_active, similarity, vacancy_title) 
+                    VALUES ('{}', {}, now(), 1, {}, '{}')
+                """.format(resume_id, ids[ind], similarities[ind], title))
             except BaseException as err:
                 print err
             finally:
