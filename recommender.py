@@ -23,18 +23,6 @@ start_time = time.time()
 r = redis.StrictRedis(host='localhost', port=6379, db=0)
 config = ConfigParser.ConfigParser()
 config.readfp(open('my.cfg'))
-db = MySQLdb.connect(host="127.0.0.1", 
-                     port=config.getint('mysqld', 'port'), 
-                     user=config.get('mysqld', 'user'), 
-                     passwd=config.get('mysqld', 'password'), 
-                     db=config.get('mysqld', 'database') )
-db.autocommit(True)
-db.set_character_set('utf8')
-cursor = db.cursor()
-cursor.execute('SET NAMES utf8;')
-cursor.execute('SET CHARACTER SET utf8;')
-cursor.execute('SET character_set_connection=utf8;')
-cursor.close()
 
 headers = {"User-Agent": "hh-recommender"}
 conn = httplib.HTTPSConnection("api.hh.ru")
@@ -91,6 +79,19 @@ with open( "tfidf_transformer.p", "rb" ) as f:
     tfidf_transformer = pickle.load(f)
 
 def get_resumes():
+    db = MySQLdb.connect(host="127.0.0.1", 
+                     port=config.getint('mysqld', 'port'), 
+                     user=config.get('mysqld', 'user'), 
+                     passwd=config.get('mysqld', 'password'), 
+                     db=config.get('mysqld', 'database') )
+    db.autocommit(True)
+    db.set_character_set('utf8')
+    cursor = db.cursor()
+    cursor.execute('SET NAMES utf8;')
+    cursor.execute('SET CHARACTER SET utf8;')
+    cursor.execute('SET character_set_connection=utf8;')
+    cursor.close()
+
     salaries = []
     features = []
     ids = []
@@ -254,17 +255,28 @@ def finalize_recommendations(resume_id):
     similarities = pre_vacancy_similarities[resume_id]
     ids = pre_vacancy_ids[resume_id]
     max_similarities = heapq.nlargest(20, range(len(numpy.asarray(similarities))), numpy.asarray(similarities).take)
-    lock.acquire()
+
+    db = MySQLdb.connect(host="127.0.0.1", 
+                     port=config.getint('mysqld', 'port'), 
+                     user=config.get('mysqld', 'user'), 
+                     passwd=config.get('mysqld', 'password'), 
+                     db=config.get('mysqld', 'database') )
+    db.autocommit(True)
+    db.set_character_set('utf8')
+    cursor = db.cursor()
+    cursor.execute('SET NAMES utf8;')
+    cursor.execute('SET CHARACTER SET utf8;')
+    cursor.execute('SET character_set_connection=utf8;')
+    cursor.close()
+
+    cursor = db.cursor()
     try:
-        cursor = db.cursor()
-        try:
-            cursor.execute("""UPDATE recommendations SET is_active=0 WHERE resume_id='{}'""".format(resume_id))
-        except BaseException as ex:
-            print ex
-        finally:
-            cursor.close()
+        cursor.execute("""UPDATE recommendations SET is_active=0 WHERE resume_id='{}'""".format(resume_id))
+    except BaseException as ex:
+        print ex
     finally:
-        lock.release()
+        cursor.close()
+
         
     for ind in max_similarities:
         conn = httplib.HTTPSConnection("api.hh.ru")
@@ -284,20 +296,18 @@ def finalize_recommendations(resume_id):
             print ex
             title = 'Title temporary not found'
 
-        lock.acquire()
+        
+        cursor = db.cursor()
         try:
-            cursor = db.cursor()
-            try:
-                cursor.execute("""
-                    INSERT INTO recommendations (resume_id, vacancy_id, updated, is_active, similarity, vacancy_title) 
-                    VALUES ('{}', {}, now(), 1, {}, '{}')
-                """.format(resume_id, ids[ind], similarities[ind], title))
-            except BaseException as err:
-                print err
-            finally:
-                cursor.close()
+            cursor.execute("""
+                INSERT INTO recommendations (resume_id, vacancy_id, updated, is_active, similarity, vacancy_title) 
+                VALUES ('{}', {}, now(), 1, {}, '{}')
+            """.format(resume_id, ids[ind], similarities[ind], title))
+        except BaseException as err:
+            print err
         finally:
-            lock.release()
+            cursor.close()
+        
         result.append('{}. for {} similarity is {}'.format(resume_id, ids[ind], similarities[ind]))
 
     return result
