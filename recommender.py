@@ -167,6 +167,7 @@ def get_resumes():
         salaries.append(salary)
         ids.append(resume_json['id'])
     cursor.close()
+    db.close()
     return features, salaries, ids, areas
 
 resume_features, resume_salaries, resume_ids, resume_areas = get_resumes()
@@ -310,6 +311,7 @@ def finalize_recommendations(resume_id):
         
         result.append('{}. for {} similarity is {}'.format(resume_id, ids[ind], similarities[ind]))
 
+    db.close()
     return result
 
 p_res = [] 
@@ -323,7 +325,6 @@ for t in p_res:
     for s in res:
         print s
         
-db.close()
 
 print 'total time {} sec\n'.format(time.time()-start_time)
 
