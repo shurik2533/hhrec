@@ -2,8 +2,6 @@
 #vacancy downloader 2
 import httplib
 import json
-import MySQLdb
-import ConfigParser
 import time
 import threading
 import pickle
@@ -77,21 +75,6 @@ with open( "tfidf_transformer.p", "rb" ) as f:
 stemmer = Stemmer.Stemmer('russian')
     
 headers = {"User-Agent": "hh-recommender"}
-
-config = ConfigParser.ConfigParser()
-config.readfp(open('my.cfg'))
-
-db = MySQLdb.connect(host="127.0.0.1", 
-                     port=config.getint('mysqld', 'port'), 
-                     user=config.get('mysqld', 'user'), 
-                     passwd=config.get('mysqld', 'password'), 
-                     db=config.get('mysqld', 'database') )
-db.set_character_set('utf8')
-cursor = db.cursor()
-cursor.execute('SET NAMES utf8;')
-cursor.execute('SET CHARACTER SET utf8;')
-cursor.execute('SET character_set_connection=utf8;')
-cursor.close()
 
 def get_vacancy_ids():
     vacancy_ids = []
@@ -207,6 +190,14 @@ def process_vacancies(vacancy_ids):
 
         p_doc = p_doc + " " + p_title + " " + p_skills
         
+        #specializations
+        specializations = set()
+        try:
+            if vacancy['specializations'] != None:
+                for spec in vacancy['specializations']:
+                    specializations.add(spec['profarea_id'])
+        except KeyError:
+            print 'cant find specialization'
 
         feature_p_doc = count_vectorizer.transform([p_doc])
         tfidf_feature_p_doc = tfidf_transformer.transform(feature_p_doc)
@@ -215,6 +206,7 @@ def process_vacancies(vacancy_ids):
         data['features'] = json.dumps(tfidf_feature_p_doc.toarray()[0].tolist()).encode("zlib")
         data['salary'] = salary
         data['area'] = area_id
+        data['specializations'] = specializations
         r.hmset(vacancy['id'], data)
         r.expire(vacancy['id'], timeout)
 
@@ -235,5 +227,4 @@ for t in threads:
     t.join()
     
 
-db.close()
 print "{} sec".format(time.time() - start_time)
