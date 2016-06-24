@@ -96,13 +96,14 @@ def get_resumes():
     features = []
     ids = []
     areas = []
+    specializations = []
     stemmer = Stemmer.Stemmer('russian')
     cursor = db.cursor()
     cursor.execute("""
         SELECT r.item 
         FROM resumes r 
         WHERE r.is_active=1 AND NOT EXISTS (
-            SELECT * 
+            SELECT *
             FROM recommendations rec
             WHERE rec.resume_id=r.item_id and rec.is_active=1
         ) """)
@@ -162,7 +163,7 @@ def get_resumes():
                     p_doc = p_doc + " " + word
             
         
-        
+        #areas
         res_areas = []
         if resume_json['area'] == None:
             res_areas.append(areas_map["1"])
@@ -172,7 +173,16 @@ def get_resumes():
             res_areas.append(areas_map[area['id']])
         areas.append(res_areas)
         
-
+        #specializations
+        res_specializations = set()
+        try:
+            if resume_json['specialization'] != None:
+                for spec in resume_json['specialization']:
+                    res_specializations.add(spec['profarea_id'])
+        except KeyError:
+            print 'cant find specialization'
+        specializations.append(res_specializations)
+               
         p_doc = p_doc + " " + p_title + " " + p_skills
         feature_p_doc = count_vectorizer.transform([p_doc])
         feature = tfidf_transformer.transform(feature_p_doc)
@@ -181,9 +191,9 @@ def get_resumes():
         ids.append(resume_json['id'])
     cursor.close()
     db.close()
-    return features, salaries, ids, areas
+    return features, salaries, ids, areas, specializations
 
-resume_features, resume_salaries, resume_ids, resume_areas = get_resumes()
+resume_features, resume_salaries, resume_ids, resume_areas, resume_specializations = get_resumes()
 lock = threading.Lock()
 
 def process_vacancy_ids(vacancies):
@@ -193,10 +203,15 @@ def process_vacancy_ids(vacancies):
     for idx, val in enumerate(resume_features):
         new_vacancy_features = []
         new_vacancy_ids = []
+        new_vacancy_specializations = []
         for vac_id, vac_data in vacancies.iteritems():
             if resume_areas[idx][0] == vac_data['area'] and (resume_salaries[idx] == None or vac_data['salary'] == 'None'):
                 new_vacancy_features.append(json.loads(vac_data['features'].decode('zlib')))
                 new_vacancy_ids.append(vac_id)
+                if 'specializations' in vac_data:
+                    new_vacancy_specializations.append(vac_data['specializations'])
+                else: 
+                    new_vacancy_specializations.append(None)
             elif resume_areas[idx][0] == vac_data['area']:
                 min_resume_salary = resume_salaries[idx] - (resume_salaries[idx] * 0.2)
                 max_resume_salary = resume_salaries[idx] + (resume_salaries[idx] * 0.8)
@@ -204,11 +219,26 @@ def process_vacancy_ids(vacancies):
                 if vac_salary >= min_resume_salary and vac_salary <= max_resume_salary:
                     new_vacancy_features.append(json.loads(vac_data['features'].decode('zlib')))
                     new_vacancy_ids.append(vac_id)
+                    if 'specializations' in vac_data:
+                        new_vacancy_specializations.append(vac_data['specializations'])
+                    else: 
+                        new_vacancy_specializations.append(None)
                     
         similarities = []
         ids = []
         if len(new_vacancy_features) > 0:
             c_result = cosine_similarity(resume_features[idx], new_vacancy_features)
+            for s_id, s_val in enumerate(c_result[0]):
+                if new_vacancy_specializations[s_id] != None:
+                    found = False
+                    for vac_spec_id in new_vacancy_specializations[s_id]:
+                        for res_spec_id in resume_specializations[idx]:
+                            if vac_spec_id == res_spec_id:
+                                found = True
+                                break;
+                        if found:
+                            c_result[0][s_id] = c_result[0][s_id] + (c_result[0][s_id]*1.0)
+                            break;
             res = heapq.nlargest(20, range(len(c_result[0])), c_result[0].take)
 
             for j in res:
